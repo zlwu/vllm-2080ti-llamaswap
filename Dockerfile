@@ -151,6 +151,45 @@ RUN cd "${RUNTIME_TREE}" \
     BUILD_TORCH_INDEX="${TORCH_INDEX}" \
     FLASHQLA_ALLOW_GPU_LESS_BUILD=1 ALLOW_HOST_MISMATCH=1 ./build.sh
 
+# Trim what the run time does not need. This has to happen here, in the builder
+# stage: deleting files after the COPY into the final image would only add
+# whiteout entries and leave the bytes in the image.
+#
+#   rust/target           5.1 GB - the Rust build tree; the artifacts are already
+#                                  installed as vllm/vllm-rs and
+#                                  vllm/_rust_tool_parser.abi3.so
+#   .deps/*-src           ~0.9 GB - FetchContent build inputs. triton_kernels is
+#                                  not importable from the venv (verified), and
+#                                  cutlass/flash_qla are kept because they are.
+#   cuda-13.0 targets/    ~4 GB  - static libraries and the math libraries.
+#                                  torch ships its own CUDA 13 libs under
+#                                  .venv/.../nvidia, and this toolkit exists
+#                                  only so nvcc can JIT: nvcc + nvvm + headers
+#                                  + libcudart are what stay.
+#   cuda-13.0 compat/     ~0.3 GB - driver compat shims, unused with a modern driver
+RUN set -eux; \
+    rm -rf "${RUNTIME_TREE}/rust/target" \
+           "${RUNTIME_TREE}/.git" \
+           "${RUNTIME_TREE}/build-logs" \
+           "${RUNTIME_TREE}/.deps/triton_kernels-src" \
+           "${RUNTIME_TREE}/.deps/triton_kernels-subbuild" \
+           "${RUNTIME_TREE}/.deps/cutlass-build" \
+           "${RUNTIME_TREE}/.deps/cutlass-subbuild"; \
+    find "${RUNTIME_TREE}" -name '__pycache__' -type d -prune -exec rm -rf {} +; \
+    find "${RUNTIME_TREE}" -name '*.pyc' -delete; \
+    CUDA_ROOT=/usr/local/cuda-13.0; \
+    rm -rf "${CUDA_ROOT}/compat" "${CUDA_ROOT}/compute-sanitizer" "${CUDA_ROOT}/extras" \
+           "${CUDA_ROOT}/doc" "${CUDA_ROOT}/src" "${CUDA_ROOT}/gds" "${CUDA_ROOT}/nvml"; \
+    find "${CUDA_ROOT}/targets" -name '*.a' -not -name 'libcudadevrt.a' -delete; \
+    rm -f "${CUDA_ROOT}"/targets/*/lib/libcublas* "${CUDA_ROOT}"/targets/*/lib/libcufft* \
+          "${CUDA_ROOT}"/targets/*/lib/libcusolver* "${CUDA_ROOT}"/targets/*/lib/libcusparse* \
+          "${CUDA_ROOT}"/targets/*/lib/libcurand* "${CUDA_ROOT}"/targets/*/lib/libnpp* \
+          "${CUDA_ROOT}"/targets/*/lib/libnvjpeg* "${CUDA_ROOT}"/targets/*/lib/libcufile* \
+          "${CUDA_ROOT}"/targets/*/lib/libnvrtc* "${CUDA_ROOT}"/targets/*/lib/libnvblas*; \
+    find "${CUDA_ROOT}" -xtype l -delete; \
+    nvcc --version | tail -1; \
+    du -sh "${CUDA_ROOT}" "${RUNTIME_TREE}";
+
 RUN "${RUNTIME_TREE}/.venv/bin/python" -c \
       'import torch, vllm; print("vllm", vllm.__version__, "torch", torch.__version__, "cuda", torch.version.cuda)'
 
