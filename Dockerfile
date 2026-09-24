@@ -121,13 +121,28 @@ COPY relax-flashqla-build-guard.py /tmp/relax-flashqla-build-guard.py
 RUN python3 /tmp/relax-flashqla-build-guard.py \
       "${RUNTIME_TREE}/tools/flashqla_sm75_patches/sm_legacy.py"
 
-# The long step. build.sh runs its own host checks (nvcc major 13, GCC major 15,
-# kernel >= 7), picks PyPI/Git mirrors, creates the venv, compiles vLLM, patches
-# torch inductor for E8M0, fetches and builds the FlashQLA SM70/SM75 extension,
-# and finally validates the runtime.
+# Keep the two host gates that actually shape the artifacts, since
+# ALLOW_HOST_MISMATCH below relaxes build.sh's own checks wholesale.
+RUN set -eux; \
+    nvcc --version | grep -q 'release 13\.'; \
+    test "$(gcc -dumpversion | cut -d. -f1)" = "15"; \
+    echo "toolchain preflight ok: $(nvcc --version | tail -1)"; \
+    echo "python: $(python3.12 --version)"; \
+    echo "build kernel: $(uname -r)"
+
+# The long step. build.sh runs its own host checks, picks PyPI/Git mirrors,
+# creates the venv, compiles vLLM, patches torch inductor for E8M0, fetches and
+# builds the FlashQLA SM70/SM75 extension, and finally validates the runtime.
+#
+# ALLOW_HOST_MISMATCH waives build.sh's `kernel >= 7` requirement. That check
+# describes the deployment host (the 0.2.x line is validated on Ubuntu 26.04 /
+# kernel 7, which the target GPU node runs); this builder is Ubuntu 24.04, the
+# same platform upstream's own Dockerfile uses as its final base, and the host
+# kernel cannot influence the compiled artifacts. nvcc and GCC are asserted
+# explicitly just above instead.
 RUN cd "${RUNTIME_TREE}" \
  && ASSUME_YES=1 NON_INTERACTIVE=1 MAX_JOBS="${MAX_JOBS}" \
-    FLASHQLA_ALLOW_GPU_LESS_BUILD=1 ./build.sh
+    FLASHQLA_ALLOW_GPU_LESS_BUILD=1 ALLOW_HOST_MISMATCH=1 ./build.sh
 
 RUN "${RUNTIME_TREE}/.venv/bin/python" -c \
       'import torch, vllm; print("vllm", vllm.__version__, "torch", torch.__version__, "cuda", torch.version.cuda)'
