@@ -1,0 +1,9 @@
+# Keep the build context tiny: the Dockerfile only needs these files.
+# The vLLM source tree is cloned inside the build, never copied in.
+*
+!Dockerfile
+!serve-foreground.sh
+!README.md
+!relax-flashqla-build-guard.py
+!LICENSE
+!.github/vllm-ref
