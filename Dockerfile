@@ -36,6 +36,12 @@ ARG REPO_URL=https://github.com/weicj/vLLM-2080Ti-Definitive.git
 # Roughly (RAM_GiB - 3) / 3, capped by the CPU count. Raise it only on a machine
 # with enough RAM: nvcc front-end jobs are memory hungry.
 ARG MAX_JOBS=4
+# build.sh only pre-installs torch when its network preflight selects a domestic
+# PyPI mirror. On the official route it relies on `uv pip install
+# --torch-backend`, but build isolation is disabled, so the build backend's own
+# torch requirement goes unmet and the build dies with "No module named
+# 'torch'". Pin the PyTorch index so torch is installed first on any route.
+ARG TORCH_INDEX=https://download.pytorch.org/whl/cu130
 ARG RUSTUP_DIST_SERVER=
 ARG RUSTUP_UPDATE_ROOT=
 ARG RUST_TOOLCHAIN=1.95
@@ -142,6 +148,7 @@ RUN set -eux; \
 # explicitly just above instead.
 RUN cd "${RUNTIME_TREE}" \
  && ASSUME_YES=1 NON_INTERACTIVE=1 MAX_JOBS="${MAX_JOBS}" \
+    BUILD_TORCH_INDEX="${TORCH_INDEX}" \
     FLASHQLA_ALLOW_GPU_LESS_BUILD=1 ALLOW_HOST_MISMATCH=1 ./build.sh
 
 RUN "${RUNTIME_TREE}/.venv/bin/python" -c \
