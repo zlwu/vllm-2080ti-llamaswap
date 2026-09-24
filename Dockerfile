@@ -53,22 +53,28 @@ ENV RUNTIME_TREE=/opt/vllm-2080ti \
 # Symlinks in /usr/local/bin win over /usr/bin on PATH, so `gcc -dumpversion`
 # (used by the upstream build script) and nvcc's default host compiler both
 # resolve to 15.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      software-properties-common gnupg ca-certificates curl git make pkg-config perl \
- && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
+#
+# `apt_retry` works around transient archive.ubuntu.com mirror-sync failures
+# ("File has unexpected size ... Mirror sync in progress?"), which otherwise
+# fail the whole build on a hash mismatch that resolves seconds later.
+RUN set -eux; \
+    apt_retry() { for i in 1 2 3 4 5; do if apt-get update -o Acquire::Retries=5; then return 0; fi; sleep 15; done; return 1; }; \
+    apt_retry; \
+    apt-get install -y --no-install-recommends \
+      software-properties-common gnupg ca-certificates curl git make pkg-config perl; \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test; \
+    apt_retry; \
+    apt-get install -y --no-install-recommends \
       gcc-15 g++-15 \
       python3.12 python3.12-venv python3.12-dev \
-      ninja-build libnuma-dev \
- && ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc \
- && ln -sf /usr/bin/g++-15 /usr/local/bin/g++ \
- && ln -sf /usr/bin/gcc-15 /usr/local/bin/cc \
- && ln -sf /usr/bin/g++-15 /usr/local/bin/c++ \
- && rm -rf /var/lib/apt/lists/* \
- && gcc -dumpversion \
- && python3.12 --version
+      ninja-build libnuma-dev; \
+    ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc; \
+    ln -sf /usr/bin/g++-15 /usr/local/bin/g++; \
+    ln -sf /usr/bin/gcc-15 /usr/local/bin/cc; \
+    ln -sf /usr/bin/g++-15 /usr/local/bin/c++; \
+    rm -rf /var/lib/apt/lists/*; \
+    gcc -dumpversion; \
+    python3.12 --version
 
 # The upstream runtime builds Rust artifacts (a `vllm-rs` binary and a PyO3
 # parser module) through setuptools-rust, so cargo must exist before build.sh.
@@ -129,6 +135,8 @@ RUN "${RUNTIME_TREE}/.venv/bin/python" -c \
 # --------------------------------------------------------------------------
 FROM ${LLAMA_SWAP_BASE} AS runtime
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 ARG DEBIAN_FRONTEND=noninteractive
 ARG RUNTIME_TREE=/opt/vllm-2080ti
 
@@ -146,18 +154,20 @@ ENV RUNTIME_TREE=${RUNTIME_TREE} \
 # FLASHINFER_WORKSPACE_BASE / TORCHINDUCTOR_CACHE_DIR). Triton additionally
 # compiles a tiny `cuda_utils.c` on import, so the Python headers must be
 # present as well.
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
-      software-properties-common gnupg ca-certificates curl \
- && add-apt-repository -y ppa:ubuntu-toolchain-r/test \
- && apt-get update \
- && apt-get install -y --no-install-recommends \
-      gcc-15 g++-15 libnuma1 libgomp1 python3.12 python3.12-dev \
- && ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc \
- && ln -sf /usr/bin/g++-15 /usr/local/bin/g++ \
- && ln -sf /usr/bin/gcc-15 /usr/local/bin/cc \
- && ln -sf /usr/bin/g++-15 /usr/local/bin/c++ \
- && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+    apt_retry() { for i in 1 2 3 4 5; do if apt-get update -o Acquire::Retries=5; then return 0; fi; sleep 15; done; return 1; }; \
+    apt_retry; \
+    apt-get install -y --no-install-recommends \
+      software-properties-common gnupg ca-certificates curl; \
+    add-apt-repository -y ppa:ubuntu-toolchain-r/test; \
+    apt_retry; \
+    apt-get install -y --no-install-recommends \
+      gcc-15 g++-15 libnuma1 libgomp1 python3.12 python3.12-dev; \
+    ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc; \
+    ln -sf /usr/bin/g++-15 /usr/local/bin/g++; \
+    ln -sf /usr/bin/gcc-15 /usr/local/bin/cc; \
+    ln -sf /usr/bin/g++-15 /usr/local/bin/c++; \
+    rm -rf /var/lib/apt/lists/*
 
 # CUDA 13.0 toolkit for run-time JIT, placed next to (not over) the image's
 # CUDA 12.8 install. The upstream launcher resolves CUDA_HOME by the CUDA
