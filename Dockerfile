@@ -54,18 +54,21 @@ ENV RUNTIME_TREE=/opt/vllm-2080ti \
 # (used by the upstream build script) and nvcc's default host compiler both
 # resolve to 15.
 #
-# `apt_retry` works around transient archive.ubuntu.com mirror-sync failures
-# ("File has unexpected size ... Mirror sync in progress?"), which otherwise
-# fail the whole build on a hash mismatch that resolves seconds later.
+# `apt_install` retries the update+install pair together. The Ubuntu archive
+# rotates packages while a CI job runs, so a freshly fetched index can already
+# point at a pool file that 404s seconds later; retrying the update alone is
+# not enough, and the whole build would fail on a hiccup that clears in seconds.
 RUN set -eux; \
-    apt_retry() { for i in 1 2 3 4 5; do if apt-get update -o Acquire::Retries=5; then return 0; fi; sleep 15; done; return 1; }; \
-    apt_retry; \
-    apt-get install -y --no-install-recommends \
-      software-properties-common gnupg ca-certificates curl git make pkg-config perl; \
+    apt_install() { \
+      for i in 1 2 3 4 5; do \
+        if apt-get update -o Acquire::Retries=5; then \
+          if apt-get install -y --no-install-recommends -o Acquire::Retries=5 "$@"; then return 0; fi; \
+        fi; \
+        echo "apt attempt $i failed; retrying in 20s"; sleep 20; \
+      done; return 1; }; \
+    apt_install software-properties-common gnupg ca-certificates curl git make pkg-config perl; \
     add-apt-repository -y ppa:ubuntu-toolchain-r/test; \
-    apt_retry; \
-    apt-get install -y --no-install-recommends \
-      gcc-15 g++-15 \
+    apt_install gcc-15 g++-15 \
       python3.12 python3.12-venv python3.12-dev \
       ninja-build libnuma-dev; \
     ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc; \
@@ -149,20 +152,24 @@ ENV RUNTIME_TREE=${RUNTIME_TREE} \
     PYTHONUNBUFFERED=1 \
     PYTHONSAFEPATH=1
 
+# Same apt retry rationale as the builder stage above.
+#
 # A compiler is needed at *runtime* too: FlashInfer compiles SM75 kernels and
 # torch.compile generates C++ wrappers on first use (then cached under
 # FLASHINFER_WORKSPACE_BASE / TORCHINDUCTOR_CACHE_DIR). Triton additionally
 # compiles a tiny `cuda_utils.c` on import, so the Python headers must be
 # present as well.
 RUN set -eux; \
-    apt_retry() { for i in 1 2 3 4 5; do if apt-get update -o Acquire::Retries=5; then return 0; fi; sleep 15; done; return 1; }; \
-    apt_retry; \
-    apt-get install -y --no-install-recommends \
-      software-properties-common gnupg ca-certificates curl; \
+    apt_install() { \
+      for i in 1 2 3 4 5; do \
+        if apt-get update -o Acquire::Retries=5; then \
+          if apt-get install -y --no-install-recommends -o Acquire::Retries=5 "$@"; then return 0; fi; \
+        fi; \
+        echo "apt attempt $i failed; retrying in 20s"; sleep 20; \
+      done; return 1; }; \
+    apt_install software-properties-common gnupg ca-certificates curl; \
     add-apt-repository -y ppa:ubuntu-toolchain-r/test; \
-    apt_retry; \
-    apt-get install -y --no-install-recommends \
-      gcc-15 g++-15 libnuma1 libgomp1 python3.12 python3.12-dev; \
+    apt_install gcc-15 g++-15 libnuma1 libgomp1 python3.12 python3.12-dev; \
     ln -sf /usr/bin/gcc-15 /usr/local/bin/gcc; \
     ln -sf /usr/bin/g++-15 /usr/local/bin/g++; \
     ln -sf /usr/bin/gcc-15 /usr/local/bin/cc; \
